@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:build-tools}",
+            "name": "Debug build-tools",
+            "program": "${workspaceFolder:build-tools}/.build/debug/build-tools",
+            "preLaunchTask": "swift: Build Debug build-tools"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:build-tools}",
+            "name": "Release build-tools",
+            "program": "${workspaceFolder:build-tools}/.build/release/build-tools",
+            "preLaunchTask": "swift: Build Release build-tools"
+        }
+    ]
+}
