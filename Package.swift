@@ -4,7 +4,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "build-tools",
+    name: "landmap",
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.2.0"),
     ],
