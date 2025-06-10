@@ -1,1 +1,1 @@
-No need to write `README.md` as it is already provided in the project root. This tool project name is called landmap, do not change it
+No need to write `README.md` as it is already provided in the project root. This tool project name is called landmap, do not change it, command name is landmap.

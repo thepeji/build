@@ -13,12 +13,14 @@ struct ProjectConfig: Codable {
     let testCommand: String?
     let dependencies: [String]
     let environment: [String: String]
+    var customCommands: [String: String]
     let createdAt: Date
-    let lastModified: Date
+    var lastModified: Date
 
     init(
         name: String, path: String, buildCommand: String, testCommand: String? = nil,
-        dependencies: [String] = [], environment: [String: String] = [:]
+        dependencies: [String] = [], environment: [String: String] = [:],
+        customCommands: [String: String] = [:]
     ) {
         self.name = name
         self.path = path
@@ -26,8 +28,25 @@ struct ProjectConfig: Codable {
         self.testCommand = testCommand
         self.dependencies = dependencies
         self.environment = environment
+        self.customCommands = customCommands
         self.createdAt = Date()
         self.lastModified = Date()
+    }
+
+    // Custom decoder to handle missing customCommands field in old configs
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        path = try container.decode(String.self, forKey: .path)
+        buildCommand = try container.decode(String.self, forKey: .buildCommand)
+        testCommand = try container.decodeIfPresent(String.self, forKey: .testCommand)
+        dependencies = try container.decodeIfPresent([String].self, forKey: .dependencies) ?? []
+        environment =
+            try container.decodeIfPresent([String: String].self, forKey: .environment) ?? [:]
+        customCommands =
+            try container.decodeIfPresent([String: String].self, forKey: .customCommands) ?? [:]
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        lastModified = try container.decode(Date.self, forKey: .lastModified)
     }
 }
 
@@ -78,6 +97,13 @@ struct Status: ParsableCommand {
             print("Environment Variables:")
             for (key, value) in projectConfig.environment.sorted(by: { $0.key < $1.key }) {
                 print("  \(key) = \(value)")
+            }
+        }
+
+        if !projectConfig.customCommands.isEmpty {
+            print("Custom Commands:")
+            for (name, command) in projectConfig.customCommands.sorted(by: { $0.key < $1.key }) {
+                print("  \(name) = \(command)")
             }
         }
 
@@ -153,15 +179,6 @@ class ConfigManager {
 }
 
 // MARK: - CLI Commands
-@main
-struct BuildTool: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "build-tool",
-        abstract: "A CLI tool for managing project builds with global configuration",
-        subcommands: [Init.self, Build.self, List.self, Remove.self, Config.self, Status.self],
-        defaultSubcommand: List.self
-    )
-}
 
 // MARK: - Init Command
 struct Init: ParsableCommand {
@@ -199,6 +216,7 @@ struct Init: ParsableCommand {
         let projectName: String
         let finalBuildCommand: String
         let finalTestCommand: String?
+        var finalCustomCommands: [String: String] = [:]
 
         if interactive {
             projectName = readInput(
@@ -206,6 +224,20 @@ struct Init: ParsableCommand {
                 default: name ?? URL(fileURLWithPath: absolutePath).lastPathComponent)
             finalBuildCommand = readInput("Build command: ", default: buildCommand)
             finalTestCommand = readInput("Test command (optional): ", default: testCommand)
+
+            // Interactive custom commands
+            print("Custom commands (press Enter when done):")
+            while true {
+                let customName = readInput(
+                    "Custom command name (or press Enter to finish): ", default: nil)
+                if customName.isEmpty { break }
+
+                let customCmd = readInput("Command for '\(customName)': ", default: nil)
+                if !customCmd.isEmpty {
+                    finalCustomCommands[customName] = customCmd
+                    print("  Added: \(customName) = \(customCmd)")
+                }
+            }
         } else {
             projectName = name ?? URL(fileURLWithPath: absolutePath).lastPathComponent
             finalBuildCommand = buildCommand
@@ -216,7 +248,8 @@ struct Init: ParsableCommand {
             name: projectName,
             path: absolutePath,
             buildCommand: finalBuildCommand,
-            testCommand: finalTestCommand?.isEmpty == false ? finalTestCommand : nil
+            testCommand: finalTestCommand?.isEmpty == false ? finalTestCommand : nil,
+            customCommands: finalCustomCommands
         )
 
         config.projects[projectKey] = projectConfig
@@ -229,6 +262,12 @@ struct Init: ParsableCommand {
         print("   Build command: \(finalBuildCommand)")
         if let testCmd = finalTestCommand {
             print("   Test command: \(testCmd)")
+        }
+        if !finalCustomCommands.isEmpty {
+            print("   Custom commands:")
+            for (name, command) in finalCustomCommands.sorted(by: { $0.key < $1.key }) {
+                print("     \(name) = \(command)")
+            }
         }
     }
 
@@ -327,6 +366,219 @@ struct Build: ParsableCommand {
     }
 }
 
+// MARK: - Run Command
+struct Run: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Run a custom command for a project"
+    )
+
+    @Argument(help: "Name of the custom command to run")
+    var commandName: String
+
+    @Option(name: .long, help: "Project path (defaults to current directory)")
+    var path: String?
+
+    @Flag(name: .long, help: "Verbose output")
+    var verbose: Bool = false
+
+    mutating func run() throws {
+        let projectPath = path ?? FileManager.default.currentDirectoryPath
+        let absolutePath = URL(fileURLWithPath: projectPath).standardizedFileURL.path
+        let projectKey = ConfigManager.getProjectKey(for: absolutePath)
+
+        let config = try ConfigManager.loadGlobalConfig()
+
+        guard let projectConfig = config.projects[projectKey] else {
+            print("❌ No project configuration found for path: \(absolutePath)")
+            print("   Run 'build-tool init' to initialize this project")
+            return
+        }
+
+        guard let command = projectConfig.customCommands[commandName] else {
+            print("❌ Custom command '\(commandName)' not found for project '\(projectConfig.name)'")
+
+            if !projectConfig.customCommands.isEmpty {
+                print("   Available custom commands:")
+                for (name, cmd) in projectConfig.customCommands.sorted(by: { $0.key < $1.key }) {
+                    print("     \(name) = \(cmd)")
+                }
+            } else {
+                print("   No custom commands configured for this project")
+                print(
+                    "   Use 'build-tool add-command --name <name> --command <command>' to add custom commands"
+                )
+            }
+            return
+        }
+
+        print("🚀 Running custom command '\(commandName)' for project '\(projectConfig.name)'...")
+        if verbose {
+            print("   Path: \(projectConfig.path)")
+            print("   Command: \(command)")
+        }
+
+        let result = try runCommand(command, in: projectConfig.path)
+
+        if result.success {
+            print("✅ Command '\(commandName)' completed successfully!")
+            if verbose && !result.output.isEmpty {
+                print("Output:")
+                print(result.output)
+            }
+        } else {
+            print("❌ Command '\(commandName)' failed!")
+            if !result.output.isEmpty {
+                print("Output:")
+                print(result.output)
+            }
+        }
+    }
+
+    private func runCommand(_ command: String, in directory: String) throws -> (
+        success: Bool, output: String
+    ) {
+        let process = Process()
+        let pipe = Pipe()
+
+        process.currentDirectoryURL = URL(fileURLWithPath: directory)
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", command]
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+
+        return (success: process.terminationStatus == 0, output: output)
+    }
+}
+
+// MARK: - Add Command
+struct AddCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "add-command",
+        abstract: "Add or update a custom command for a project"
+    )
+
+    @Option(name: .long, help: "Name of the custom command")
+    var name: String
+
+    @Option(name: .long, help: "Command to execute")
+    var command: String
+
+    @Option(name: .long, help: "Project path (defaults to current directory)")
+    var path: String?
+
+    @Flag(name: .long, help: "Overwrite existing command if it exists")
+    var force: Bool = false
+
+    mutating func run() throws {
+        let projectPath = path ?? FileManager.default.currentDirectoryPath
+        let absolutePath = URL(fileURLWithPath: projectPath).standardizedFileURL.path
+        let projectKey = ConfigManager.getProjectKey(for: absolutePath)
+
+        var config = try ConfigManager.loadGlobalConfig()
+
+        guard var projectConfig = config.projects[projectKey] else {
+            print("❌ No project configuration found for path: \(absolutePath)")
+            print("   Run 'build-tool init' to initialize this project")
+            return
+        }
+
+        let commandName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let commandValue = command.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if commandName.isEmpty {
+            print("❌ Command name cannot be empty")
+            return
+        }
+
+        if commandValue.isEmpty {
+            print("❌ Command cannot be empty")
+            return
+        }
+
+        if projectConfig.customCommands[commandName] != nil && !force {
+            print("❌ Custom command '\(commandName)' already exists.")
+            print("   Current command: \(projectConfig.customCommands[commandName]!)")
+            print("   Use --force to overwrite or choose a different name")
+            return
+        }
+
+        let isUpdate = projectConfig.customCommands[commandName] != nil
+        projectConfig.customCommands[commandName] = commandValue
+        projectConfig.lastModified = Date()
+        config.projects[projectKey] = projectConfig
+        config.lastUpdated = Date()
+
+        try ConfigManager.saveGlobalConfig(config)
+
+        if isUpdate {
+            print("✅ Custom command '\(commandName)' updated successfully!")
+        } else {
+            print("✅ Custom command '\(commandName)' added successfully!")
+        }
+        print("   Command: \(commandValue)")
+        print("   Project: \(projectConfig.name)")
+    }
+}
+
+// MARK: - Remove Command (Custom)
+struct RemoveCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "remove-command",
+        abstract: "Remove a custom command from a project"
+    )
+
+    @Argument(help: "Name of the custom command to remove")
+    var commandName: String
+
+    @Option(name: .long, help: "Project path (defaults to current directory)")
+    var path: String?
+
+    mutating func run() throws {
+        let projectPath = path ?? FileManager.default.currentDirectoryPath
+        let absolutePath = URL(fileURLWithPath: projectPath).standardizedFileURL.path
+        let projectKey = ConfigManager.getProjectKey(for: absolutePath)
+
+        var config = try ConfigManager.loadGlobalConfig()
+
+        guard var projectConfig = config.projects[projectKey] else {
+            print("❌ No project configuration found for path: \(absolutePath)")
+            print("   Run 'build-tool init' to initialize this project")
+            return
+        }
+
+        guard let removedCommand = projectConfig.customCommands.removeValue(forKey: commandName)
+        else {
+            print("❌ Custom command '\(commandName)' not found for project '\(projectConfig.name)'")
+
+            if !projectConfig.customCommands.isEmpty {
+                print("   Available custom commands:")
+                for (name, cmd) in projectConfig.customCommands.sorted(by: { $0.key < $1.key }) {
+                    print("     \(name) = \(cmd)")
+                }
+            } else {
+                print("   No custom commands configured for this project")
+            }
+            return
+        }
+
+        projectConfig.lastModified = Date()
+        config.projects[projectKey] = projectConfig
+        config.lastUpdated = Date()
+
+        try ConfigManager.saveGlobalConfig(config)
+
+        print("✅ Custom command '\(commandName)' removed successfully!")
+        print("   Removed command: \(removedCommand)")
+        print("   Project: \(projectConfig.name)")
+    }
+}
+
 // MARK: - List Command
 struct List: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -355,6 +607,13 @@ struct List: ParsableCommand {
 
             if let testCommand = project.testCommand {
                 print("  Test: \(testCommand)")
+            }
+
+            if !project.customCommands.isEmpty {
+                print("  Custom Commands:")
+                for (name, command) in project.customCommands.sorted(by: { $0.key < $1.key }) {
+                    print("    \(name) = \(command)")
+                }
             }
 
             if verbose {
@@ -460,4 +719,18 @@ extension String {
     static func * (left: String, right: Int) -> String {
         return String(repeating: left, count: right)
     }
+}
+
+// MARK: - Main Command
+@main
+struct BuildTool: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "build-tool",
+        abstract: "A CLI tool for managing project builds with global configuration",
+        subcommands: [
+            Init.self, Build.self, Run.self, AddCommand.self, RemoveCommand.self, List.self,
+            Remove.self, Config.self, Status.self,
+        ],
+        defaultSubcommand: List.self
+    )
 }
