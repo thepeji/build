@@ -17,6 +17,24 @@
             "name": "Release build-tools",
             "program": "${workspaceFolder:build-tools}/.build/release/build-tools",
             "preLaunchTask": "swift: Build Release build-tools"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:build-tools}",
+            "name": "Debug landmap",
+            "program": "${workspaceFolder:build-tools}/.build/debug/landmap",
+            "preLaunchTask": "swift: Build Debug landmap"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:build-tools}",
+            "name": "Release landmap",
+            "program": "${workspaceFolder:build-tools}/.build/release/landmap",
+            "preLaunchTask": "swift: Build Release landmap"
         }
     ]
 }

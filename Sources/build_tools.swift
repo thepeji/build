@@ -7,7 +7,7 @@
 import ArgumentParser
 
 @main
-struct build_tools: ParsableCommand {
+struct landmap: ParsableCommand {
     @Argument(help: "The phrase to repeat.")
     var phrase: String
 
